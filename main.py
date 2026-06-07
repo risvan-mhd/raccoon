@@ -1,11 +1,22 @@
 from __future__ import annotations
-from typing import Self
+from dataclasses import dataclass
 from enum import Enum, auto
 from pathlib import Path
-from dataclasses import dataclass
+from typing import Self
 
 from pyray import Color, ConfigFlags, Font, KeyboardKey as Key, TextureFilter
 import pyray as ray
+
+from icons import (
+    ICONS,
+    DIR_ICON,
+    FILE_ICON,
+    ICONS,
+    LICENSE_ICON,
+    MAKE_FILE_ICON,
+    Icon,
+    icon_map,
+)
 
 
 FONT_SIZE = 24.0
@@ -14,10 +25,10 @@ SPACING = 1.0
 FG_COLOR = Color(255, 255, 255, 255)
 BG_COLOR = Color(30, 30, 30, 255)
 
-SELECTION_COLOR = Color(61, 123, 255, 100)
+SELECTION_COLOR = Color(52, 52, 52, 100)
 
 DIR_COLOR = Color(66, 135, 245, 255)
-FILE_COLOR = Color(66, 245, 87, 255)
+FILE_COLOR = Color(255, 255, 255, 255)
 
 font_regular: Font | None = None
 font_bold: Font | None = None
@@ -31,6 +42,7 @@ class EntryType(Enum):
 @dataclass(frozen=True)
 class Entry:
     name: str
+    icon: Icon
     etype: EntryType
     path: Path
     color: Color
@@ -38,9 +50,16 @@ class Entry:
     @classmethod
     def of(cls, path: Path) -> Self:
         name = path.name
+        icon = get_icon(path)
         etype = EntryType.FILE if path.is_file() else EntryType.DIR
         color = FILE_COLOR if path.is_file() else DIR_COLOR
-        return cls(name=name, etype=etype, path=path, color=color)
+        return cls(
+            name=name,
+            icon=icon,
+            etype=etype,
+            path=path,
+            color=color,
+        )
 
 
 @dataclass
@@ -48,6 +67,20 @@ class State:
     cwd: Path
     files: list[Entry]
     selected_idx: int
+
+
+def get_icon(path: Path) -> Icon:
+    if path.is_dir():
+        return DIR_ICON
+
+    name_lower = path.name.lower()
+    if name_lower == "license":
+        return LICENSE_ICON
+
+    if name_lower == "makefile":
+        return MAKE_FILE_ICON
+
+    return icon_map.get(path.suffix, FILE_ICON)
 
 
 def draw_text(
@@ -61,16 +94,16 @@ def draw_text(
     )
 
 
-def get_line_height() -> int:
+def get_line_size() -> tuple[int, int]:
     assert font_regular
     text_size = ray.measure_text_ex(font_regular, "M", FONT_SIZE, SPACING)
-    return int(text_size.y)
+    return int(text_size.x), int(text_size.y)
 
 
 def draw_line(line: int, color: Color) -> None:
     assert font_regular
     width = ray.get_screen_width()
-    height = get_line_height()
+    _, height = get_line_size()
 
     x = 0
     y = line * height
@@ -93,17 +126,41 @@ def list_dir(path: Path) -> list[Entry]:
 def load_fonts() -> None:
     global font_regular, font_bold
 
-    font_regular = ray.load_font(
-        "./fonts/JetBrainsMonoNerdFontMono-Regular.ttf"
+    # Standard 95 printable ASCII characters (codes 32 to 126)
+    codepoints = tuple(range(32, 127))
+    codepoints = codepoints + tuple(ord(icon.char) for icon in ICONS)
+
+    count = len(codepoints)
+    c_codepoints = ray.ffi.new(f"int[]", codepoints)
+    c_ptr = ray.ffi.cast("int *", c_codepoints)
+
+    font_regular = ray.load_font_ex(
+        "./fonts/JetBrainsMonoNerdFontMono-Regular.ttf",
+        int(FONT_SIZE),
+        c_ptr,
+        count,
     )
     ray.set_texture_filter(
         font_regular.texture, TextureFilter.TEXTURE_FILTER_BILINEAR
     )
 
-    font_bold = ray.load_font("./fonts/JetBrainsMonoNerdFontMono-Bold.ttf")
+    font_bold = ray.load_font_ex(
+        "./fonts/JetBrainsMonoNerdFontMono-Bold.ttf",
+        int(FONT_SIZE),
+        c_ptr,
+        count,
+    )
     ray.set_texture_filter(
         font_bold.texture, TextureFilter.TEXTURE_FILTER_BILINEAR
     )
+
+
+def unload_fonts() -> None:
+    if font_regular:
+        ray.unload_font(font_regular)
+
+    if font_bold:
+        ray.unload_font(font_bold)
 
 
 def is_key_pressed(key: int, repeat: bool = True) -> bool:
@@ -147,7 +204,7 @@ def main():
     load_fonts()
 
     pad_x = 18
-    line_height = get_line_height()
+    line_width, line_height = get_line_size()
     while not ray.window_should_close():
         handle_input(state)
 
@@ -166,11 +223,17 @@ def main():
 
             x = pad_x
             y = line_height * line
+            icon = file.icon
+            draw_text(icon.char, x, y, color=icon.color, bold=bold)
+
+            x += 2 * line_width
             draw_text(file.name, x, y, color=file.color, bold=bold)
+
             line += 1
 
         ray.end_drawing()
 
+    unload_fonts()
     ray.close_window()
 
 
