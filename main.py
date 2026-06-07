@@ -67,6 +67,7 @@ class State:
     cwd: Path
     files: list[Entry]
     selected_idx: int
+    scroll_top: int = 0
 
 
 def get_icon(path: Path) -> Icon:
@@ -170,11 +171,18 @@ def is_key_pressed(key: int, repeat: bool = True) -> bool:
 
 
 def handle_input(state: State) -> None:
+    _, line_height = get_line_size()
+    visible_rows = (ray.get_screen_height() // line_height) - 1  # For top bar
+
     if is_key_pressed(Key.KEY_J):
         state.selected_idx = min(state.selected_idx + 1, len(state.files) - 1)
+        if state.selected_idx >= state.scroll_top + visible_rows:
+            state.scroll_top = state.selected_idx - visible_rows + 1
 
     elif is_key_pressed(Key.KEY_K):
         state.selected_idx = max(0, state.selected_idx - 1)
+        if state.selected_idx < state.scroll_top:
+            state.scroll_top = state.selected_idx
 
     elif is_key_pressed(Key.KEY_ENTER, False) and state.files:
         file = state.files[state.selected_idx]
@@ -182,11 +190,13 @@ def handle_input(state: State) -> None:
             state.cwd = file.path
             state.files = list_dir(state.cwd)
             state.selected_idx = 0
+            state.scroll_top = 0
 
     elif is_key_pressed(Key.KEY_H):
         state.cwd = state.cwd.parent
         state.files = list_dir(state.cwd)
         state.selected_idx = 0
+        state.scroll_top = 0
 
 
 def main():
@@ -214,10 +224,18 @@ def main():
         draw_line(0, Color(20, 20, 20, 150))
         draw_text(state.cwd.as_posix(), pad_x, 0)
 
+        start_row = 1
+        visible_rows = (ray.get_screen_height() // line_height) - 1
+        visible_files = state.files[
+            state.scroll_top : state.scroll_top + visible_rows
+        ]
+
         line = 1
-        for i, file in enumerate(state.files):
+        for visible_i, file in enumerate(visible_files):
+            real_idx = state.scroll_top + visible_i
+
             bold = False
-            if i == state.selected_idx:
+            if real_idx == state.selected_idx:
                 bold = True
                 draw_line(line, SELECTION_COLOR)
 
