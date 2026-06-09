@@ -28,6 +28,7 @@ FG_COLOR = Color(255, 255, 255, 255)
 BG_COLOR = Color(30, 30, 30, 255)
 
 SELECTION_COLOR = Color(52, 52, 52, 100)
+INACTIVE_COLOR = Color(40, 40, 40, 255)
 
 DIR_COLOR = Color(66, 135, 245, 255)
 FILE_COLOR = Color(255, 255, 255, 255)
@@ -59,6 +60,13 @@ class Entry:
             path=path,
             color=color,
         )
+
+
+@dataclass
+class State:
+    buffer_1: FileBuffer
+    buffer_2: FileBuffer
+    active_buffer: FileBuffer
 
 
 @dataclass(frozen=True)
@@ -229,10 +237,14 @@ def draw(
     height: int,
     col_pad: int,
     row_pad: int,
+    is_active: bool,
 ) -> None:
     visible_files = buffer.entries[
-        buffer.scroll_top : buffer.scroll_top + height
+        buffer.scroll_top : buffer.scroll_top + height - 1
     ]
+
+    if not is_active:
+        grid.draw_rect(col, row, width, height, INACTIVE_COLOR)
 
     grid.draw_rect(col, row, width, 1, Color(20, 20, 20, 150))
     grid.draw_text(buffer.path.as_posix(), col + col_pad, row + row_pad)
@@ -242,7 +254,7 @@ def draw(
         real_idx = buffer.scroll_top + visible_i
 
         bold = False
-        if real_idx == buffer.selected_idx:
+        if is_active and real_idx == buffer.selected_idx:
             bold = True
             grid.draw_rect(col, row + line, width, 1, SELECTION_COLOR)
 
@@ -278,8 +290,6 @@ def handle_input(buffer: FileBuffer, visible_rows: int) -> None:
 
 
 def main():
-    cwd = Path.cwd()
-
     ray.set_config_flags(ConfigFlags.FLAG_WINDOW_RESIZABLE)
 
     ray.init_window(800, 800, "Raccoon")
@@ -289,17 +299,47 @@ def main():
     font_size = 24
     font_regular, font_bold = load_fonts(font_size)
 
+    cwd = Path.cwd()
     char_width, char_height = get_char_size(font_regular, float(font_size))
     grid = Grid(char_width, char_height, font_size, font_regular, font_bold)
-    file_buffer = FileBuffer()
-    file_buffer.set_path(cwd)
+
+    b1 = FileBuffer()
+    b1.set_path(cwd)
+
+    b2 = FileBuffer()
+    b2.set_path(cwd)
+
+    state = State(b1, b2, b1)
     while not ray.window_should_close():
-        handle_input(file_buffer, grid.rows() - 1)
+        handle_input(state.active_buffer, grid.rows() - 1)
 
         ray.begin_drawing()
         ray.clear_background(BG_COLOR)
 
-        draw(file_buffer, grid, 0, 0, grid.cols(), grid.rows(), 2, 0)
+        cols = grid.cols() // 2
+        rows = grid.rows()
+        draw(
+            state.buffer_1,
+            grid,
+            0,
+            0,
+            cols,
+            rows,
+            2,
+            0,
+            state.buffer_1 is state.active_buffer,
+        )
+        draw(
+            state.buffer_2,
+            grid,
+            cols,
+            0,
+            cols,
+            rows,
+            2,
+            0,
+            state.buffer_2 is state.active_buffer,
+        )
 
         ray.end_drawing()
 
