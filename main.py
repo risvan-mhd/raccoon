@@ -273,7 +273,8 @@ def draw(
         line += 1
 
 
-def handle_input(buffer: FileBuffer, visible_rows: int) -> None:
+def handle_input(state: State, visible_rows: int) -> None:
+    buffer = state.active_buffer
     if is_key_pressed(Key.KEY_J):
         buffer.move_down(visible_rows)
 
@@ -287,6 +288,13 @@ def handle_input(buffer: FileBuffer, visible_rows: int) -> None:
 
     elif is_key_pressed(Key.KEY_H):
         buffer.parent()
+
+    elif is_key_pressed(Key.KEY_TAB):
+        state.active_buffer = (
+            state.buffer_2
+            if state.active_buffer is state.buffer_1
+            else state.buffer_1
+        )
 
 
 def main():
@@ -311,7 +319,7 @@ def main():
 
     state = State(b1, b2, b1)
     while not ray.window_should_close():
-        handle_input(state.active_buffer, grid.rows() - 1)
+        handle_input(state, grid.rows() - 1)
 
         ray.begin_drawing()
         ray.clear_background(BG_COLOR)
