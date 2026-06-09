@@ -61,15 +61,6 @@ class Entry:
         )
 
 
-@dataclass
-class State:
-    cwd: Path
-    files: list[Entry]
-    selected_idx: int
-    grid: Grid
-    scroll_top: int = 0
-
-
 @dataclass(frozen=True)
 class Grid:
     cell_width: int
@@ -81,12 +72,11 @@ class Grid:
     def rows(self) -> int:
         return ray.get_screen_height() // self.cell_height
 
+    def cols(self) -> int:
+        return ray.get_screen_width() // self.cell_width
+
     def cell_to_pixel(self, col: int, row: int) -> tuple[int, int]:
         return col * self.cell_width, row * self.cell_height
-
-    def draw_line(self, row: int, fill: Color) -> None:
-        w = ray.get_screen_width() // self.cell_width
-        self.draw_rect(0, row, w, 1, fill)
 
     def draw_rect(
         self, col: int, row: int, width: int, height: int, fill: Color
@@ -112,6 +102,47 @@ class Grid:
             1.0,
             color,
         )
+
+
+class FileBuffer:
+    def __init__(self) -> None:
+        self.path: Path = Path(".")
+        self.entries: list[Entry] = []
+        self.selected_idx = 0
+        self.scroll_top = 0
+
+    def set_path(self, path: Path) -> None:
+        self.path = path
+        self.entries = list_dir(path)
+        self.selected_idx = 0
+        self.scroll_top = 0
+
+    def move_down(self, visible_rows: int) -> None:
+        if not self.entries:
+            return
+
+        self.selected_idx = min(self.selected_idx + 1, len(self.entries) - 1)
+        if self.selected_idx >= self.scroll_top + visible_rows:
+            self.scroll_top = self.selected_idx - visible_rows + 1
+
+    def move_up(self) -> None:
+        if not self.entries:
+            return
+
+        self.selected_idx = max(0, self.selected_idx - 1)
+        if self.selected_idx < self.scroll_top:
+            self.scroll_top = self.selected_idx
+
+    def enter(self) -> None:
+        if not self.entries:
+            return
+
+        file = self.entries[self.selected_idx]
+        if file.etype == EntryType.DIR:
+            self.set_path(file.path)
+
+    def parent(self) -> None:
+        self.set_path(self.path.parent)
 
 
 def get_icon(path: Path) -> Icon:
@@ -189,40 +220,65 @@ def is_key_pressed(key: int, repeat: bool = True) -> bool:
     )
 
 
-def handle_input(state: State) -> None:
-    visible_rows = state.grid.rows() - 1  # For top bar
+def draw(
+    buffer: FileBuffer,
+    grid: Grid,
+    col: int,
+    row: int,
+    width: int,
+    height: int,
+    col_pad: int,
+    row_pad: int,
+) -> None:
+    visible_files = buffer.entries[
+        buffer.scroll_top : buffer.scroll_top + height
+    ]
 
+    grid.draw_rect(col, row, width, 1, Color(20, 20, 20, 150))
+    grid.draw_text(buffer.path.as_posix(), col + col_pad, row + row_pad)
+
+    line = 1
+    for visible_i, file in enumerate(visible_files):
+        real_idx = buffer.scroll_top + visible_i
+
+        bold = False
+        if real_idx == buffer.selected_idx:
+            bold = True
+            grid.draw_rect(col, row + line, width, 1, SELECTION_COLOR)
+
+        line_col = col + col_pad
+        line_row = row + line + row_pad
+        icon = file.icon
+        grid.draw_text(
+            icon.char, line_col, line_row, color=icon.color, bold=bold
+        )
+
+        line_col += 2
+        grid.draw_text(
+            file.name, line_col, line_row, color=file.color, bold=bold
+        )
+
+        line += 1
+
+
+def handle_input(buffer: FileBuffer, visible_rows: int) -> None:
     if is_key_pressed(Key.KEY_J):
-        state.selected_idx = min(state.selected_idx + 1, len(state.files) - 1)
-        if state.selected_idx >= state.scroll_top + visible_rows:
-            state.scroll_top = state.selected_idx - visible_rows + 1
+        buffer.move_down(visible_rows)
 
     elif is_key_pressed(Key.KEY_K):
-        state.selected_idx = max(0, state.selected_idx - 1)
-        if state.selected_idx < state.scroll_top:
-            state.scroll_top = state.selected_idx
+        buffer.move_up()
 
-    elif (
-        is_key_pressed(Key.KEY_ENTER, False) or is_key_pressed(Key.KEY_L, False)
-    ) and state.files:
-        file = state.files[state.selected_idx]
-        if file.etype == EntryType.DIR:
-            state.cwd = file.path
-            state.files = list_dir(state.cwd)
-            state.selected_idx = 0
-            state.scroll_top = 0
+    elif is_key_pressed(Key.KEY_ENTER, False) or is_key_pressed(
+        Key.KEY_L, False
+    ):
+        buffer.enter()
 
     elif is_key_pressed(Key.KEY_H):
-        state.cwd = state.cwd.parent
-        state.files = list_dir(state.cwd)
-        state.selected_idx = 0
-        state.scroll_top = 0
+        buffer.parent()
 
 
 def main():
     cwd = Path.cwd()
-    files = list_dir(cwd)
-    selected_idx = 0
 
     ray.set_config_flags(ConfigFlags.FLAG_WINDOW_RESIZABLE)
 
@@ -233,42 +289,17 @@ def main():
     font_size = 24
     font_regular, font_bold = load_fonts(font_size)
 
-    pad_col = 2
     char_width, char_height = get_char_size(font_regular, float(font_size))
     grid = Grid(char_width, char_height, font_size, font_regular, font_bold)
-    state = State(cwd, files, selected_idx, grid)
+    file_buffer = FileBuffer()
+    file_buffer.set_path(cwd)
     while not ray.window_should_close():
-        handle_input(state)
+        handle_input(file_buffer, grid.rows() - 1)
 
         ray.begin_drawing()
         ray.clear_background(BG_COLOR)
 
-        grid.draw_line(0, Color(20, 20, 20, 150))
-        grid.draw_text(state.cwd.as_posix(), pad_col, 0)
-
-        visible_rows = (ray.get_screen_height() // char_height) - 1
-        visible_files = state.files[
-            state.scroll_top : state.scroll_top + visible_rows
-        ]
-
-        line = 1
-        for visible_i, file in enumerate(visible_files):
-            real_idx = state.scroll_top + visible_i
-
-            bold = False
-            if real_idx == state.selected_idx:
-                bold = True
-                grid.draw_line(line, SELECTION_COLOR)
-
-            col = pad_col
-            row = line
-            icon = file.icon
-            grid.draw_text(icon.char, col, row, color=icon.color, bold=bold)
-
-            col += 2
-            grid.draw_text(file.name, col, row, color=file.color, bold=bold)
-
-            line += 1
+        draw(file_buffer, grid, 0, 0, grid.cols(), grid.rows(), 2, 0)
 
         ray.end_drawing()
 
