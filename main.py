@@ -1,8 +1,8 @@
 from __future__ import annotations
-from dataclasses import dataclass
+from dataclasses import astuple, dataclass
+from typing import Iterator, Self
 from enum import Enum, auto
 from pathlib import Path
-from typing import Self
 
 from pyray import (
     Color,
@@ -69,16 +69,14 @@ class Entry:
 
 @dataclass
 class State:
-    buffer_1: FileBuffer
-    buffer_2: FileBuffer
-    active_buffer: FileBuffer
+    pane_1: Pane
+    pane_2: Pane
+    active_pane: Pane
     layout: Layout = Layout.HORIZONTAL
 
     def swap_active(self) -> None:
-        self.active_buffer = (
-            self.buffer_2
-            if self.active_buffer is self.buffer_1
-            else self.buffer_1
+        self.active_pane = (
+            self.pane_2 if self.active_pane is self.pane_1 else self.pane_1
         )
 
     def swap_layout(self) -> None:
@@ -88,8 +86,8 @@ class State:
             else Layout.HORIZONTAL
         )
 
-    def swap_buffers(self) -> None:
-        self.buffer_1, self.buffer_2 = self.buffer_2, self.buffer_1
+    def swap_panes(self) -> None:
+        self.pane_1, self.pane_2 = self.pane_2, self.pane_1
 
 
 @dataclass(frozen=True)
@@ -136,45 +134,90 @@ class Grid:
 
 
 class FileBuffer:
-    def __init__(self) -> None:
-        self.path: Path = Path(".")
+    def __init__(self, path: Path) -> None:
+        self.path = path
         self.entries: list[Entry] = []
         self.selected_idx = 0
-        self.scroll_top = 0
+
+        self.set_path(path)
+
+    def selected(self) -> Entry:
+        assert self.entries
+        return self.entries[self.selected_idx]
 
     def set_path(self, path: Path) -> None:
         self.path = path
         self.entries = list_dir(path)
         self.selected_idx = 0
-        self.scroll_top = 0
 
-    def move_down(self, visible_rows: int) -> None:
-        if not self.entries:
+    def set_selected_idx(self, idx: int) -> None:
+        self.selected_idx = max(0, min(idx, len(self.entries) - 1))
+
+    def change_idx(self, by: int) -> None:
+        self.set_selected_idx(self.selected_idx + by)
+
+
+@dataclass(frozen=True)
+class Geometry:
+    x: int
+    y: int
+    width: int
+    height: int
+
+    def __iter__(self) -> Iterator[int]:
+        return iter(astuple(self))
+
+
+class Pane:
+    def __init__(self, path: Path) -> None:
+        self.scroll_top: int = 0
+        self.buffer = FileBuffer(path)
+        self.geometry = Geometry(0, 0, 0, 0)
+
+    def selected_idx(self) -> int:
+        return self.buffer.selected_idx
+
+    def path(self) -> str:
+        return self.buffer.path.as_posix()
+
+    def visible_files(self) -> list[Entry]:
+        return self.buffer.entries[
+            self.scroll_top : self.scroll_top + self.geometry.height - 1
+        ]
+
+    def has_entries(self) -> bool:
+        return len(self.buffer.entries) != 0
+
+    def set_geometry(self, x: int, y: int, width: int, height: int) -> None:
+        self.geometry = Geometry(x, y, width, height)
+
+    def move_down(self) -> None:
+        if not self.has_entries():
             return
 
-        visible_rows -= 1  # First row is for header
-        self.selected_idx = min(self.selected_idx + 1, len(self.entries) - 1)
-        if self.selected_idx >= self.scroll_top + visible_rows:
-            self.scroll_top = self.selected_idx - visible_rows + 1
+        visible_rows = self.geometry.height - 1  # First row is for header
+        self.buffer.change_idx(1)
+        if self.selected_idx() >= self.scroll_top + visible_rows:
+            self.scroll_top = self.selected_idx() - visible_rows + 1
 
     def move_up(self) -> None:
-        if not self.entries:
+        if not self.has_entries():
             return
 
-        self.selected_idx = max(0, self.selected_idx - 1)
-        if self.selected_idx < self.scroll_top:
-            self.scroll_top = self.selected_idx
+        self.buffer.change_idx(-1)
+        if self.selected_idx() < self.scroll_top:
+            self.scroll_top = self.selected_idx()
 
     def enter(self) -> None:
-        if not self.entries:
+        if not self.has_entries():
             return
 
-        file = self.entries[self.selected_idx]
+        file = self.buffer.selected()
         if file.etype == EntryType.DIR:
-            self.set_path(file.path)
+            self.buffer.set_path(file.path)
 
     def parent(self) -> None:
-        self.set_path(self.path.parent)
+        self.buffer.set_path(self.buffer.path.parent)
 
 
 def get_icon(path: Path) -> Icon:
@@ -252,38 +295,33 @@ def is_key_pressed(key: int, repeat: bool = True) -> bool:
     )
 
 
-def draw_file_buffer(
-    buffer: FileBuffer,
+def draw_file_pane(
+    pane: Pane,
     grid: Grid,
-    col: int,
-    row: int,
-    width: int,
-    height: int,
     col_pad: int,
     row_pad: int,
     is_active: bool,
 ) -> None:
-    visible_files = buffer.entries[
-        buffer.scroll_top : buffer.scroll_top + height - 1
-    ]
+    visible_files = pane.visible_files()
+    x, y, width, height = pane.geometry
 
     if not is_active:
-        grid.draw_rect(col, row, width, height, INACTIVE_COLOR)
+        grid.draw_rect(x, y, width, height, INACTIVE_COLOR)
 
-    grid.draw_rect(col, row, width, 1, Color(20, 20, 20, 150))
-    grid.draw_text(buffer.path.as_posix(), col + col_pad, row + row_pad)
+    grid.draw_rect(x, y, width, 1, Color(20, 20, 20, 150))
+    grid.draw_text(pane.path(), x + col_pad, y + row_pad)
 
     line = 1
     for visible_i, file in enumerate(visible_files):
-        real_idx = buffer.scroll_top + visible_i
+        real_idx = pane.scroll_top + visible_i
 
         bold = False
-        if is_active and real_idx == buffer.selected_idx:
+        if is_active and real_idx == pane.selected_idx():
             bold = True
-            grid.draw_rect(col, row + line, width, 1, SELECTION_COLOR)
+            grid.draw_rect(x, y + line, width, 1, SELECTION_COLOR)
 
-        line_col = col + col_pad
-        line_row = row + line + row_pad
+        line_col = x + col_pad
+        line_row = y + line + row_pad
         icon = file.icon
         grid.draw_text(
             icon.char, line_col, line_row, color=icon.color, bold=bold
@@ -300,62 +338,55 @@ def draw_file_buffer(
 def draw(state: State, grid: Grid) -> None:
     pad_x = 2
     pad_y = 0
+    draw_file_pane(
+        state.pane_1,
+        grid,
+        pad_x,
+        pad_y,
+        state.pane_1 is state.active_pane,
+    )
+    draw_file_pane(
+        state.pane_2,
+        grid,
+        pad_x,
+        pad_y,
+        state.pane_2 is state.active_pane,
+    )
 
-    width = grid.cols()
-    height = grid.rows()
 
-    b1_x = 0
-    b1_y = 0
+def update_panes(state: State, screen_cols: int, screen_rows: int) -> None:
+    p1_x = 0
+    p1_y = 0
 
-    b2_x = 0
-    b2_y = 0
+    p2_x = 0
+    p2_y = 0
 
     if state.layout == Layout.HORIZONTAL:
-        width //= 2
-        b2_x = width
+        screen_cols //= 2
+        p2_x = screen_cols
     else:
-        height //= 2
-        b2_y = height
+        screen_rows //= 2
+        p2_y = screen_rows
 
-    draw_file_buffer(
-        state.buffer_1,
-        grid,
-        b1_x,
-        b1_y,
-        width,
-        height,
-        pad_x,
-        pad_y,
-        state.buffer_1 is state.active_buffer,
-    )
-    draw_file_buffer(
-        state.buffer_2,
-        grid,
-        b2_x,
-        b2_y,
-        width,
-        height,
-        pad_x,
-        pad_y,
-        state.buffer_2 is state.active_buffer,
-    )
+    state.pane_1.set_geometry(p1_x, p1_y, screen_cols, screen_rows)
+    state.pane_2.set_geometry(p2_x, p2_y, screen_cols, screen_rows)
 
 
-def handle_input(state: State, visible_rows: int) -> None:
-    buffer = state.active_buffer
+def handle_input(state: State) -> None:
+    pane = state.active_pane
     if is_key_pressed(Key.KEY_J):
-        buffer.move_down(visible_rows)
+        pane.move_down()
 
     elif is_key_pressed(Key.KEY_K):
-        buffer.move_up()
+        pane.move_up()
 
     elif is_key_pressed(Key.KEY_ENTER, False) or is_key_pressed(
         Key.KEY_L, False
     ):
-        buffer.enter()
+        pane.enter()
 
     elif is_key_pressed(Key.KEY_H, False):
-        buffer.parent()
+        pane.parent()
 
     elif is_key_pressed(Key.KEY_TAB):
         state.swap_active()
@@ -364,11 +395,11 @@ def handle_input(state: State, visible_rows: int) -> None:
         state.swap_layout()
 
     elif is_key_pressed(Key.KEY_S):
-        state.swap_buffers()
+        state.swap_panes()
         state.swap_active()  # Keep the same side active after swapping buffers
 
 
-def main():
+def main() -> None:
     ray.set_config_flags(ConfigFlags.FLAG_WINDOW_RESIZABLE)
 
     ray.init_window(800, 800, "Raccoon")
@@ -382,15 +413,14 @@ def main():
     char_width, char_height = get_char_size(font_regular, float(font_size))
     grid = Grid(char_width, char_height, font_size, font_regular, font_bold)
 
-    b1 = FileBuffer()
-    b1.set_path(cwd)
+    p1 = Pane(cwd)
+    p2 = Pane(cwd)
 
-    b2 = FileBuffer()
-    b2.set_path(cwd)
-
-    state = State(b1, b2, b1)
+    state = State(p1, p2, p1)
     while not ray.window_should_close():
-        handle_input(state, grid.rows())
+        update_panes(state, grid.cols(), grid.rows())
+        handle_input(state)
+
         ray.begin_drawing()
         ray.clear_background(BG_COLOR)
         draw(state, grid)
