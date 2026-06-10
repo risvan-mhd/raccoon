@@ -88,6 +88,9 @@ class State:
             else Layout.HORIZONTAL
         )
 
+    def swap_buffers(self) -> None:
+        self.buffer_1, self.buffer_2 = self.buffer_2, self.buffer_1
+
 
 @dataclass(frozen=True)
 class Grid:
@@ -357,8 +360,12 @@ def handle_input(state: State, visible_rows: int) -> None:
     elif is_key_pressed(Key.KEY_TAB):
         state.swap_active()
 
-    elif is_key_pressed(Key.KEY_S):
+    elif is_key_pressed(Key.KEY_O):
         state.swap_layout()
+
+    elif is_key_pressed(Key.KEY_S):
+        state.swap_buffers()
+        state.swap_active()  # Keep the same side active after swapping buffers
 
 
 def main():
