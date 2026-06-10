@@ -39,6 +39,11 @@ class EntryType(Enum):
     DIR = auto()
 
 
+class Layout(Enum):
+    VERTICAL = auto()
+    HORIZONTAL = auto()
+
+
 @dataclass(frozen=True)
 class Entry:
     name: str
@@ -67,6 +72,21 @@ class State:
     buffer_1: FileBuffer
     buffer_2: FileBuffer
     active_buffer: FileBuffer
+    layout: Layout = Layout.HORIZONTAL
+
+    def swap_active(self) -> None:
+        self.active_buffer = (
+            self.buffer_2
+            if self.active_buffer is self.buffer_1
+            else self.buffer_1
+        )
+
+    def swap_layout(self) -> None:
+        self.layout = (
+            Layout.VERTICAL
+            if self.layout == Layout.HORIZONTAL
+            else Layout.HORIZONTAL
+        )
 
 
 @dataclass(frozen=True)
@@ -129,6 +149,7 @@ class FileBuffer:
         if not self.entries:
             return
 
+        visible_rows -= 1  # First row is for header
         self.selected_idx = min(self.selected_idx + 1, len(self.entries) - 1)
         if self.selected_idx >= self.scroll_top + visible_rows:
             self.scroll_top = self.selected_idx - visible_rows + 1
@@ -228,7 +249,7 @@ def is_key_pressed(key: int, repeat: bool = True) -> bool:
     )
 
 
-def draw(
+def draw_file_buffer(
     buffer: FileBuffer,
     grid: Grid,
     col: int,
@@ -273,6 +294,50 @@ def draw(
         line += 1
 
 
+def draw(state: State, grid: Grid) -> None:
+    pad_x = 2
+    pad_y = 0
+
+    width = grid.cols()
+    height = grid.rows()
+
+    b1_x = 0
+    b1_y = 0
+
+    b2_x = 0
+    b2_y = 0
+
+    if state.layout == Layout.HORIZONTAL:
+        width //= 2
+        b2_x = width
+    else:
+        height //= 2
+        b2_y = height
+
+    draw_file_buffer(
+        state.buffer_1,
+        grid,
+        b1_x,
+        b1_y,
+        width,
+        height,
+        pad_x,
+        pad_y,
+        state.buffer_1 is state.active_buffer,
+    )
+    draw_file_buffer(
+        state.buffer_2,
+        grid,
+        b2_x,
+        b2_y,
+        width,
+        height,
+        pad_x,
+        pad_y,
+        state.buffer_2 is state.active_buffer,
+    )
+
+
 def handle_input(state: State, visible_rows: int) -> None:
     buffer = state.active_buffer
     if is_key_pressed(Key.KEY_J):
@@ -290,11 +355,10 @@ def handle_input(state: State, visible_rows: int) -> None:
         buffer.parent()
 
     elif is_key_pressed(Key.KEY_TAB):
-        state.active_buffer = (
-            state.buffer_2
-            if state.active_buffer is state.buffer_1
-            else state.buffer_1
-        )
+        state.swap_active()
+
+    elif is_key_pressed(Key.KEY_S):
+        state.swap_layout()
 
 
 def main():
@@ -319,36 +383,10 @@ def main():
 
     state = State(b1, b2, b1)
     while not ray.window_should_close():
-        handle_input(state, grid.rows() - 1)
-
+        handle_input(state, grid.rows())
         ray.begin_drawing()
         ray.clear_background(BG_COLOR)
-
-        cols = grid.cols() // 2
-        rows = grid.rows()
-        draw(
-            state.buffer_1,
-            grid,
-            0,
-            0,
-            cols,
-            rows,
-            2,
-            0,
-            state.buffer_1 is state.active_buffer,
-        )
-        draw(
-            state.buffer_2,
-            grid,
-            cols,
-            0,
-            cols,
-            rows,
-            2,
-            0,
-            state.buffer_2 is state.active_buffer,
-        )
-
+        draw(state, grid)
         ray.end_drawing()
 
     unload_fonts(font_regular, font_bold)
