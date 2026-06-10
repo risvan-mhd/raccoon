@@ -354,7 +354,7 @@ def handle_input(state: State, visible_rows: int) -> None:
     ):
         buffer.enter()
 
-    elif is_key_pressed(Key.KEY_H):
+    elif is_key_pressed(Key.KEY_H, False):
         buffer.parent()
 
     elif is_key_pressed(Key.KEY_TAB):
