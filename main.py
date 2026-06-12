@@ -70,6 +70,7 @@ class Entry:
 class Mode(Enum):
     NORMAL = auto()
     MARK_PENDING = auto()
+    GOTO_MARK_PENDING = auto()
 
 
 @dataclass
@@ -190,6 +191,9 @@ class Pane:
 
     def path(self) -> Path:
         return self.buffer.path
+
+    def set_path(self, path: Path) -> None:
+        self.buffer.set_path(path)
 
     def visible_files(self) -> list[Entry]:
         return self.buffer.entries[
@@ -423,6 +427,9 @@ def handle_input_normal(state: State) -> None:
     elif is_key_pressed(Key.KEY_M, False):
         state.mode = Mode.MARK_PENDING
 
+    elif is_key_pressed(Key.KEY_APOSTROPHE):
+        state.mode = Mode.GOTO_MARK_PENDING
+
 
 def handle_input_mark_pending(state: State) -> None:
     key = ray.get_char_pressed()
@@ -433,6 +440,18 @@ def handle_input_mark_pending(state: State) -> None:
     state.mode = Mode.NORMAL
 
 
+def handle_input_goto_mark_pending(state: State) -> None:
+    key = ray.get_char_pressed()
+    if not key:
+        return
+
+    path = state.marks.get(key)
+    if path:
+        state.active_pane.set_path(path)
+
+    state.mode = Mode.NORMAL
+
+
 def handle_input(state: State) -> None:
     match state.mode:
         case Mode.NORMAL:
@@ -440,6 +459,9 @@ def handle_input(state: State) -> None:
 
         case Mode.MARK_PENDING:
             handle_input_mark_pending(state)
+
+        case Mode.GOTO_MARK_PENDING:
+            handle_input_goto_mark_pending(state)
 
 
 def main() -> None:
