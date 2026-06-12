@@ -1,5 +1,5 @@
 from __future__ import annotations
-from dataclasses import astuple, dataclass
+from dataclasses import astuple, dataclass, field
 from typing import Iterator, Self
 from enum import Enum, auto
 from pathlib import Path
@@ -67,13 +67,20 @@ class Entry:
         )
 
 
+class Mode(Enum):
+    NORMAL = auto()
+    MARK_PENDING = auto()
+
+
 @dataclass
 class State:
     pane_1: Pane
     pane_2: Pane
     active_pane: Pane
+    mode: Mode = Mode.NORMAL
     layout: Layout = Layout.HORIZONTAL
     zoomed: bool = False
+    marks: dict[int, Path] = field(default_factory=dict)
 
     def toggle_zoom(self) -> None:
         self.zoomed = not self.zoomed
@@ -181,8 +188,8 @@ class Pane:
     def selected_idx(self) -> int:
         return self.buffer.selected_idx
 
-    def path(self) -> str:
-        return self.buffer.path.as_posix()
+    def path(self) -> Path:
+        return self.buffer.path
 
     def visible_files(self) -> list[Entry]:
         return self.buffer.entries[
@@ -313,7 +320,7 @@ def draw_pane(
         grid.draw_rect(x, y, width, height, INACTIVE_COLOR)
 
     grid.draw_rect(x, y, width, 1, Color(20, 20, 20, 150))
-    grid.draw_text(pane.path(), x + col_pad, y + row_pad)
+    grid.draw_text(pane.path().as_posix(), x + col_pad, y + row_pad)
 
     line = 1
     for visible_i, file in enumerate(visible_files):
@@ -384,7 +391,7 @@ def update_panes(state: State, screen_cols: int, screen_rows: int) -> None:
     state.pane_2.set_geometry(p2_x, p2_y, screen_cols, screen_rows)
 
 
-def handle_input(state: State) -> None:
+def handle_input_normal(state: State) -> None:
     pane = state.active_pane
     if is_key_pressed(Key.KEY_J):
         pane.move_down()
@@ -412,6 +419,27 @@ def handle_input(state: State) -> None:
 
     elif is_key_pressed(Key.KEY_Z, False):
         state.toggle_zoom()
+
+    elif is_key_pressed(Key.KEY_M, False):
+        state.mode = Mode.MARK_PENDING
+
+
+def handle_input_mark_pending(state: State) -> None:
+    key = ray.get_char_pressed()
+    if not key:
+        return
+
+    state.marks[key] = state.active_pane.path()
+    state.mode = Mode.NORMAL
+
+
+def handle_input(state: State) -> None:
+    match state.mode:
+        case Mode.NORMAL:
+            handle_input_normal(state)
+
+        case Mode.MARK_PENDING:
+            handle_input_mark_pending(state)
 
 
 def main() -> None:
