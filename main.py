@@ -73,6 +73,10 @@ class State:
     pane_2: Pane
     active_pane: Pane
     layout: Layout = Layout.HORIZONTAL
+    zoomed: bool = False
+
+    def toggle_zoom(self) -> None:
+        self.zoomed = not self.zoomed
 
     def swap_active(self) -> None:
         self.active_pane = (
@@ -295,7 +299,7 @@ def is_key_pressed(key: int, repeat: bool = True) -> bool:
     )
 
 
-def draw_file_pane(
+def draw_pane(
     pane: Pane,
     grid: Grid,
     col_pad: int,
@@ -338,14 +342,18 @@ def draw_file_pane(
 def draw(state: State, grid: Grid) -> None:
     pad_x = 2
     pad_y = 0
-    draw_file_pane(
+    if state.zoomed:
+        draw_pane(state.active_pane, grid, pad_x, pad_y, True)
+        return
+
+    draw_pane(
         state.pane_1,
         grid,
         pad_x,
         pad_y,
         state.pane_1 is state.active_pane,
     )
-    draw_file_pane(
+    draw_pane(
         state.pane_2,
         grid,
         pad_x,
@@ -355,6 +363,10 @@ def draw(state: State, grid: Grid) -> None:
 
 
 def update_panes(state: State, screen_cols: int, screen_rows: int) -> None:
+    if state.zoomed:
+        state.active_pane.set_geometry(0, 0, screen_cols, screen_rows)
+        return
+
     p1_x = 0
     p1_y = 0
 
@@ -397,6 +409,9 @@ def handle_input(state: State) -> None:
     elif is_key_pressed(Key.KEY_S):
         state.swap_panes()
         state.swap_active()  # Keep the same side active after swapping buffers
+
+    elif is_key_pressed(Key.KEY_Z, False):
+        state.toggle_zoom()
 
 
 def main() -> None:
