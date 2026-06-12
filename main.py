@@ -153,6 +153,9 @@ class FileBuffer:
 
         self.set_path(path)
 
+    def refresh(self) -> None:
+        self.set_path(self.path)
+
     def selected(self) -> Entry:
         assert self.entries
         return self.entries[self.selected_idx]
@@ -185,6 +188,9 @@ class Pane:
         self.scroll_top: int = 0
         self.buffer = FileBuffer(path)
         self.geometry = Geometry(0, 0, 0, 0)
+
+    def refresh(self) -> None:
+        self.buffer.refresh()
 
     def selected_idx(self) -> int:
         return self.buffer.selected_idx
@@ -429,6 +435,14 @@ def handle_input_normal(state: State) -> None:
 
     elif is_key_pressed(Key.KEY_APOSTROPHE):
         state.mode = Mode.GOTO_MARK_PENDING
+    else:
+        key = chr(ray.get_char_pressed())
+        if key == "r":
+            state.active_pane.refresh()
+
+        elif key == "R":
+            state.pane_1.refresh()
+            state.pane_2.refresh()
 
 
 def handle_input_mark_pending(state: State) -> None:
